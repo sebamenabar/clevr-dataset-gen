@@ -9,9 +9,9 @@ from __future__ import print_function
 import math, sys, random, argparse, json, os, tempfile
 from datetime import datetime as dt
 from collections import Counter
-import matplotlib.pyplot as plt
-import numpy as np
 from PIL import Image
+import numpy as np
+import matplotlib.pyplot as plt
 
 """
 Renders random scenes using Blender, each with with a random number of objects;
@@ -77,7 +77,7 @@ parser.add_argument('--margin', default=0.4, type=float,
     help="Along all cardinal directions (left, right, front, back), all " +
          "objects will be at least this distance apart. This makes resolving " +
          "spatial relationships slightly less ambiguous.")
-parser.add_argument('--min_pixels_per_object', default=200, type=int,
+parser.add_argument('--min_pixels_per_object', default=250, type=int,
     help="All objects will have at least this many visible pixels in the " +
          "final rendered images; this ensures that no objects are fully " +
          "occluded by other objects.")
@@ -130,9 +130,9 @@ parser.add_argument('--use_gpu', default=0, type=int,
     help="Setting --use_gpu 1 enables GPU-accelerated rendering using CUDA. " +
          "You must have an NVIDIA GPU with the CUDA toolkit installed for " +
          "to work.")
-parser.add_argument('--width', default=320, type=int,
+parser.add_argument('--width', default=480, type=int,
     help="The width (in pixels) for the rendered images")
-parser.add_argument('--height', default=240, type=int,
+parser.add_argument('--height', default=320, type=int,
     help="The height (in pixels) for the rendered images")
 parser.add_argument('--key_light_jitter', default=1.0, type=float,
     help="The magnitude of random jitter to add to the key light position.")
@@ -154,6 +154,11 @@ parser.add_argument('--render_tile_size', default=256, type=int,
          "quality of the rendered image but may affect the speed; CPU-based " +
          "rendering may achieve better performance using smaller tile sizes " +
          "while larger tile sizes may be optimal for GPU-based rendering.")
+parser.add_argument('--theta', type=float, default=40)
+
+# MASK_COORDS = (110, 210, 90, 190)
+MASK_COORDS = None
+
 
 def main(args):
   num_digits = 6
@@ -190,20 +195,21 @@ def main(args):
       output_image=img_path,
       output_scene=scene_path,
       output_blendfile=blend_path,
+      pos_density=pos_density,
     )
 
     pos_density += used_pixels
     # mask_coords = (110, 210, 100, 180)
-    # Zi = density_to_prob(pos_density, MASK_COORDS)
+    Zi = density_to_prob(pos_density, MASK_COORDS)
     
-    # plt.imshow(Zi)
-    # plt.colorbar()
-    # plt.savefig('../output/density.png')
-    # plt.close()
+    plt.imshow(Zi)
+    plt.colorbar()
+    plt.savefig('../output/density.png')
+    plt.close()
 
     plt.imshow(pos_density)
     plt.colorbar()
-    plt.savefig('../output/pix_usage_orig.jpg')
+    plt.savefig('../output/pix_usage.png')
     plt.close()
 
     all_positions += positions
@@ -212,8 +218,9 @@ def main(args):
     plt.hist2d(ys, xs, (50, 50), cmap=plt.cm.jet)
     plt.colorbar()
     plt.gca().invert_yaxis()
-    plt.savefig('../output/positions_orig.jpg')
+    plt.savefig('../output/positions.png')
     plt.close()
+
 
   # After rendering all images, combine the JSON files for each scene into a
   # single JSON file.
@@ -233,12 +240,7 @@ def main(args):
   with open(args.output_scene_file, 'w') as f:
     json.dump(output, f)
 
-def rotate(x, y, theta=40):
-  theta = math.radians(theta)
-  xp = x * math.cos(theta) + y * math.sin(theta)
-  yp = -x * math.sin(theta) + y * math.cos(theta)
-  
-  return xp, yp
+
 
 def render_scene(args,
     num_objects=5,
@@ -247,6 +249,7 @@ def render_scene(args,
     output_image='render.png',
     output_scene='render_json',
     output_blendfile=None,
+    pos_density=None
   ):
 
   # Load the main blendfile
@@ -340,7 +343,7 @@ def render_scene(args,
       bpy.data.objects['Lamp_Fill'].location[i] += rand(args.fill_light_jitter)
 
   # Now make some random objects
-  objects, blender_objects, all_visible, positions = add_random_objects(scene_struct, num_objects, args, camera)
+  objects, blender_objects, used_pixels, positions = add_random_objects(scene_struct, num_objects, args, camera, pos_density)
 
   # Render the scene and dump the scene data structure
   scene_struct['objects'] = objects
@@ -348,6 +351,7 @@ def render_scene(args,
   while True:
     try:
       bpy.ops.render.render(write_still=True)
+      pass
       break
     except Exception as e:
       print(e)
@@ -358,10 +362,72 @@ def render_scene(args,
   if output_blendfile is not None:
     bpy.ops.wm.save_as_mainfile(filepath=output_blendfile)
 
-  return all_visible, positions
+  return used_pixels, positions
 
+def rotate(x, y, theta=40):
+  theta = math.radians(theta)
+  xp = x * math.cos(theta) + y * math.sin(theta)
+  yp = -x * math.sin(theta) + y * math.cos(theta)
+  
+  return xp, yp
 
-def add_random_objects(scene_struct, num_objects, args, camera):
+def zero_one_norm(v, low, high):
+  return (v - low) / (high - low)
+
+def rescale(v, low, high):
+  return v * (high - low) + low
+
+def density_to_prob(Z, mask_coords=None, power=4):
+  Zi = 1 / np.power(Z, power)
+  if mask_coords is not None:
+    Zi[mask_coords[0]:mask_coords[1],mask_coords[2]:mask_coords[3]] = 0
+  Zi = Zi / Zi.sum()
+  return Zi
+
+# A = (9 - 3.5) / 17
+# B = (3.5 - 9.5) / 17
+
+def interpolate(val, x_low, x_high, low, high):
+  # b + a * x_low = low
+  # b + a * x_high = high
+  a = (high - low) / (x_high - x_low)
+  b = low - a * x_low
+  
+  return b + a * val
+
+def dinp(x_low, x_high, low, high):
+  return (high - low) / (x_high - x_low)
+
+# def gen_range(cord, a=A, b=B):
+#     return (-9 + a * cord, 9.5 + b * cord)
+
+def sample_2d_pos(Zi):
+  linear_idx = np.random.choice(Zi.size, p=Zi.ravel())
+  x, y = np.unravel_index(linear_idx, Zi.shape)
+
+  return x, y
+
+def solve_equation(p1, p2):
+    c1 = p2[1] - p1[1]
+    c2 = p2[0] - p1[0]
+    
+    def f(x):
+        return ((x - p1[0]) * (c1)) / (c2) + p1[1]
+    
+    return f
+
+def aphine_uniform(low, high, height_low, height_high):
+    L = high - low
+    A = (height_low + height_high) / 2 * L
+    m = (height_high - height_low) / L
+        
+    r = random.uniform(0, 1)
+
+    x = (-height_low + math.sqrt((height_low ** 2 + 2 * m * r * A))) / (m)
+    
+    return low + x
+
+def add_random_objects(scene_struct, num_objects, args, camera, pos_density):
   """
   Add random objects to the current blender scene
   """
@@ -400,9 +466,42 @@ def add_random_objects(scene_struct, num_objects, args, camera):
       if num_tries > args.max_retries:
         for obj in blender_objects:
           utils.delete_object(obj)
-        return add_random_objects(scene_struct, num_objects, args, camera)
-      x = random.uniform(-3, 3)
-      y = random.uniform(-3, 3)
+        return add_random_objects(scene_struct, num_objects, args, camera, pos_density)
+      
+      # Zi = density_to_prob(pos_density, MASK_COORDS)
+      # x, y = sample_2d_pos(Zi,)
+      
+      x_low, x_high = (-11, 5)
+      y_low, y_high = (-9.3, 9.3)
+      # y_low, y_high = (3, 3)
+
+      yrange_left = (y_low, -3.5)
+      yrange_right = (y_high, 3.5)
+
+      # fup = solve_equation((x_low, yrange_right[0]), (x_high, yrange_right[1]))
+      # fdown = solve_equation((x_low, yrange_left[0]), (x_high, yrange_left[1]))
+      # while True:
+      #   x = random.uniform(x_low, x_high)
+      #   y = random.uniform(y_low, y_high)
+      #   if y >= fdown(x) and y <= fup(x):
+      #       break
+
+      # x = random.uniform(x_low, x_high)
+      x = aphine_uniform(x_low, x_high, 1, 2.2)
+      yrange = interpolate(x, x_low, x_high, *yrange_left), interpolate(x, x_low, x_high, *yrange_right)
+      y = random.uniform(*yrange)
+      # y = random.uniform(-2, 2)
+      # x, y = zero_one_norm(x, 0, 320), zero_one_norm(y, 0, 480)
+      # Borde inferior: 5
+      # Borde inferior: (5,[-3.5,3.5])
+      # Border superior: -12
+      # Border superior izquierdo: (-12, -9)
+      # Border superior derecho: (-12, 9.5)
+
+      # x, y = rescale(x, -12, 5), rescale(y, *yrange)
+
+
+      x, y = rotate(x, y, args.theta)
       # Check to make sure the new object is further than min_dist from all
       # other objects, and further than margin along the four cardinal directions
       dists_good = True
@@ -475,7 +574,7 @@ def add_random_objects(scene_struct, num_objects, args, camera):
     print('Some objects are occluded; replacing objects')
     for obj in blender_objects:
       utils.delete_object(obj)
-    return add_random_objects(scene_struct, num_objects, args, camera)
+    return add_random_objects(scene_struct, num_objects, args, camera, pos_density)
 
   return objects, blender_objects, all_visible, positions
 
@@ -526,17 +625,20 @@ def check_visibility(blender_objects, min_pixels_per_object):
   color_count = Counter((p[i], p[i+1], p[i+2], p[i+3])
                         for i in range(0, len(p), 4))
 
+  # with Image.open(path) as img:
   _img = Image.open(path)
   img = np.array(_img.copy())
   _img.close()
   non_black = (img != (64, 64, 64, 256)).all(axis = 2)
 
-  os.remove(path)
+  # os.remove(path)
+
   if len(color_count) != len(blender_objects) + 1:
     return False
   for _, count in color_count.most_common():
     if count < min_pixels_per_object:
       return False
+
   return non_black
 
 
