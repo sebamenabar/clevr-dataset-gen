@@ -12,6 +12,7 @@ from collections import Counter
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
+import os.path as osp
 
 """
 Renders random scenes using Blender, each with with a random number of objects;
@@ -77,7 +78,7 @@ parser.add_argument('--margin', default=0.4, type=float,
     help="Along all cardinal directions (left, right, front, back), all " +
          "objects will be at least this distance apart. This makes resolving " +
          "spatial relationships slightly less ambiguous.")
-parser.add_argument('--min_pixels_per_object', default=250, type=int,
+parser.add_argument('--min_pixels_per_object', default=200, type=int,
     help="All objects will have at least this many visible pixels in the " +
          "final rendered images; this ensures that no objects are fully " +
          "occluded by other objects.")
@@ -99,6 +100,12 @@ parser.add_argument('--split', default='new',
          "the names of rendered images, and will also be stored in the JSON " +
          "scene structure for each image.")
 parser.add_argument('--output_image_dir', default='../output/images/',
+    help="The directory where output images will be stored. It will be " +
+         "created if it does not exist.")
+parser.add_argument('--output_normal_dir', default='../output/normals/',
+    help="The directory where output images will be stored. It will be " +
+         "created if it does not exist.")
+parser.add_argument('--output_depth_dir', default='../output/depths/',
     help="The directory where output images will be stored. It will be " +
          "created if it does not exist.")
 parser.add_argument('--output_scene_dir', default='../output/scenes/',
@@ -166,14 +173,23 @@ def main(args):
   img_template = '%s%%0%dd.png' % (prefix, num_digits)
   scene_template = '%s%%0%dd.json' % (prefix, num_digits)
   blend_template = '%s%%0%dd.blend' % (prefix, num_digits)
+  normal_template = '%s%%0%dd_' % (prefix, num_digits)
+  depth_template = '%s%%0%dd_' % (prefix, num_digits)
+
   img_template = os.path.join(args.output_image_dir, img_template)
   scene_template = os.path.join(args.output_scene_dir, scene_template)
   blend_template = os.path.join(args.output_blend_dir, blend_template)
+  normal_template = os.path.join(args.output_normal_dir, normal_template)
+  depth_template = os.path.join(args.output_depth_dir, depth_template)
 
   if not os.path.isdir(args.output_image_dir):
     os.makedirs(args.output_image_dir)
   if not os.path.isdir(args.output_scene_dir):
     os.makedirs(args.output_scene_dir)
+  if not os.path.isdir(args.output_normal_dir):
+    os.makedirs(args.output_normal_dir)
+  if not os.path.isdir(args.output_depth_dir):
+    os.makedirs(args.output_depth_dir)
   if args.save_blendfiles == 1 and not os.path.isdir(args.output_blend_dir):
     os.makedirs(args.output_blend_dir)
   
@@ -182,6 +198,8 @@ def main(args):
   pos_density = np.ones((args.height, args.width))
   for i in range(args.num_images):
     img_path = img_template % (i + args.start_idx)
+    normal_path = normal_template % (i + args.start_idx)
+    depth_path = depth_template % (i + args.start_idx)
     scene_path = scene_template % (i + args.start_idx)
     all_scene_paths.append(scene_path)
     blend_path = None
@@ -193,6 +211,8 @@ def main(args):
       output_index=(i + args.start_idx),
       output_split=args.split,
       output_image=img_path,
+      output_depth=depth_path,
+      output_normal=normal_path,
       output_scene=scene_path,
       output_blendfile=blend_path,
       pos_density=pos_density,
@@ -204,12 +224,12 @@ def main(args):
     
     plt.imshow(Zi)
     plt.colorbar()
-    plt.savefig('../output/density.png')
+    plt.savefig('../output/density_%d.png' % args.start_idx)
     plt.close()
 
     plt.imshow(pos_density)
     plt.colorbar()
-    plt.savefig('../output/pix_usage.png')
+    plt.savefig('../output/pix_usage_%d.png' % args.start_idx)
     plt.close()
 
     all_positions += positions
@@ -218,27 +238,27 @@ def main(args):
     plt.hist2d(ys, xs, (50, 50), cmap=plt.cm.jet)
     plt.colorbar()
     plt.gca().invert_yaxis()
-    plt.savefig('../output/positions.png')
+    plt.savefig('../output/positions_%d.png' % args.start_idx)
     plt.close()
 
 
   # After rendering all images, combine the JSON files for each scene into a
   # single JSON file.
-  all_scenes = []
-  for scene_path in all_scene_paths:
-    with open(scene_path, 'r') as f:
-      all_scenes.append(json.load(f))
-  output = {
-    'info': {
-      'date': args.date,
-      'version': args.version,
-      'split': args.split,
-      'license': args.license,
-    },
-    'scenes': all_scenes
-  }
-  with open(args.output_scene_file, 'w') as f:
-    json.dump(output, f)
+  # all_scenes = []
+  # for scene_path in all_scene_paths:
+  #   with open(scene_path, 'r') as f:
+  #     all_scenes.append(json.load(f))
+  # output = {
+  #   'info': {
+  #     'date': args.date,
+  #     'version': args.version,
+  #     'split': args.split,
+  #     'license': args.license,
+  #   },
+  #   'scenes': all_scenes
+  # }
+  # with open(args.output_scene_file, 'w') as f:
+  #   json.dump(output, f)
 
 
 
@@ -247,6 +267,8 @@ def render_scene(args,
     output_index=0,
     output_split='none',
     output_image='render.png',
+    output_depth=None,
+    output_normal=None,
     output_scene='render_json',
     output_blendfile=None,
     pos_density=None
@@ -254,6 +276,12 @@ def render_scene(args,
 
   # Load the main blendfile
   bpy.ops.wm.open_mainfile(filepath=args.base_scene_blendfile)
+
+  # Normal and depth output dir
+  bpy.data.scenes[0].node_tree.nodes['Normal Output'].base_path = osp.dirname(output_normal)
+  bpy.data.scenes[0].node_tree.nodes['Normal Output'].file_slots[0].path = osp.basename(output_normal)
+  bpy.data.scenes[0].node_tree.nodes['Depth Output'].base_path = osp.dirname(output_depth)
+  bpy.data.scenes[0].node_tree.nodes['Depth Output'].file_slots[0].path = osp.basename(output_depth)
 
   # Load materials
   utils.load_materials(args.material_dir)
@@ -471,12 +499,12 @@ def add_random_objects(scene_struct, num_objects, args, camera, pos_density):
       # Zi = density_to_prob(pos_density, MASK_COORDS)
       # x, y = sample_2d_pos(Zi,)
       
-      x_low, x_high = (-11, 5)
-      y_low, y_high = (-9.3, 9.3)
+      x_low, x_high = (-11, 4)
+      y_low, y_high = (-8.5, 8.5)
       # y_low, y_high = (3, 3)
 
-      yrange_left = (y_low, -3.5)
-      yrange_right = (y_high, 3.5)
+      yrange_left = (y_low, -3)
+      yrange_right = (y_high, 3)
 
       # fup = solve_equation((x_low, yrange_right[0]), (x_high, yrange_right[1]))
       # fdown = solve_equation((x_low, yrange_left[0]), (x_high, yrange_left[1]))
@@ -684,6 +712,8 @@ def render_shadeless(blender_objects, path='flat.png'):
     mat.diffuse_color = [r, g, b]
     mat.use_shadeless = True
     obj.data.materials[0] = mat
+
+  print(object_colors)
 
   # Render the scene
   bpy.ops.render.render(write_still=True)
