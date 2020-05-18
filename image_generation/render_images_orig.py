@@ -195,6 +195,8 @@ def main(args):
     os.makedirs(args.output_normal_dir)
   if not os.path.isdir(args.output_depth_dir):
     os.makedirs(args.output_depth_dir)
+  if not os.path.isdir(args.output_stats_dir):
+    os.makedirs(args.output_stats_dir)
   if args.save_blendfiles == 1 and not os.path.isdir(args.output_blend_dir):
     os.makedirs(args.output_blend_dir)
   
