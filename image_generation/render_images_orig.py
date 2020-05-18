@@ -195,8 +195,6 @@ def main(args):
     os.makedirs(args.output_normal_dir)
   if not os.path.isdir(args.output_depth_dir):
     os.makedirs(args.output_depth_dir)
-  if not os.path.isdir(args.output_stats_dir):
-    os.makedirs(args.output_stats_dir)
   if args.save_blendfiles == 1 and not os.path.isdir(args.output_blend_dir):
     os.makedirs(args.output_blend_dir)
   
@@ -503,40 +501,8 @@ def add_random_objects(scene_struct, num_objects, args, camera, pos_density):
           utils.delete_object(obj)
         return add_random_objects(scene_struct, num_objects, args, camera, pos_density)
       
-      # Zi = density_to_prob(pos_density, MASK_COORDS)
-      # x, y = sample_2d_pos(Zi,)
-      
-      x_low, x_high = (-11, 5)
-      y_low, y_high = (-9, 9)
-      # y_low, y_high = (3, 3)
-
-      yrange_left = (y_low, -3.2)
-      yrange_right = (y_high, 3.2)
-
-      # fup = solve_equation((x_low, yrange_right[0]), (x_high, yrange_right[1]))
-      # fdown = solve_equation((x_low, yrange_left[0]), (x_high, yrange_left[1]))
-      # while True:
-      #   x = random.uniform(x_low, x_high)
-      #   y = random.uniform(y_low, y_high)
-      #   if y >= fdown(x) and y <= fup(x):
-      #       break
-
-      # x = random.uniform(x_low, x_high)
-      x = aphine_uniform(x_low, x_high, 1, 2.2)
-      yrange = interpolate(x, x_low, x_high, *yrange_left), interpolate(x, x_low, x_high, *yrange_right)
-      y = random.uniform(*yrange)
-      # y = random.uniform(-2, 2)
-      # x, y = zero_one_norm(x, 0, 320), zero_one_norm(y, 0, 480)
-      # Borde inferior: 5
-      # Borde inferior: (5,[-3.5,3.5])
-      # Border superior: -12
-      # Border superior izquierdo: (-12, -9)
-      # Border superior derecho: (-12, 9.5)
-
-      # x, y = rescale(x, -12, 5), rescale(y, *yrange)
-
-
-      x, y = rotate(x, y, args.theta)
+      x = random.uniform(-3, 3)
+      y = random.uniform(-3, 3)
       # Check to make sure the new object is further than min_dist from all
       # other objects, and further than margin along the four cardinal directions
       dists_good = True
